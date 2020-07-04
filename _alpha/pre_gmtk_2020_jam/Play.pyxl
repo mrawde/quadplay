@@ -1,0 +1,273 @@
+Play
+════════════════════════════════════════════════════════════════════════
+
+const ballCategory = 1 bitshl 1
+const wallCategory = 1 bitshl 2
+
+let physics = make_physics()
+let rim_width = 3
+let rim_height = 5
+let rim_l = make_entity({shape: "rect", 
+                         density: infinity,
+                         restitution: 80%,
+                         contact_category_mask: wallCategory,
+                         size: xy(rim_width, rim_height), pos: basketPos + xy(-0.5*rim_width, 0.5*rim_height)})
+let rim_r = make_entity({shape: "rect", 
+                         density: infinity,
+                         restitution: 80%,
+                         contact_category_mask: wallCategory,
+                         size: xy(rim_width, rim_height), pos: basketPos + xy(basketSize.x + 0.5*rim_width, 0.5*rim_height)})
+let ground = make_entity({shape: "rect", 
+                         density: infinity,
+                         restitution: 100%,
+                         contact_category_mask: wallCategory,
+                         size: xy(SCREEN_SIZE.x, SCREEN_SIZE.y - groundY), 
+                         pos: xy(0.5 * SCREEN_SIZE.x, groundY + 0.5 * (SCREEN_SIZE.y - groundY))})
+let entityArray = [ rim_l, rim_r, ground ]
+for physicsEnt in entityArray:
+    physics_add_entity(physics, physicsEnt)
+
+const ninja = make_entity({
+    pos:            xy(½ SCREEN_SIZE.x, groundY),
+    spritesheet:    ninjaSprite,
+    sprite:         ninjaSprite.idle[0],
+    animation:      "idle",
+    
+    // Current animation frame
+    spriteIndex:    0,
+    
+    // How long we've been on this sprite in the animation
+    spriteFrame:    0,
+    z:              1,
+    throwFrame: -1,
+})
+
+const ball = make_entity({
+    pos: xy(½ SCREEN_SIZE.x + 20, groundY - 20),
+    sprite: ballSprite[13][6],
+    scale: xy(0.5, 0.5),
+    z: 2,
+})
+ball.scale_in_parent = ball.scale
+let ball_physics = make_entity({shape: "disk",
+                                size: (ball.size * ball.scale)-2,
+                                pos: ball.pos,
+                                density: 10%,
+                                 contact_category_mask: ballCategory,
+                                restitution: 50%})
+physics_add_entity(physics, ball_physics)
+
+def on_ball_collision():
+    play_sound(ballBounce)
+
+physics_add_contact_callback(physics, on_ball_collision, 1, ∞, (ballCategory bitor wallCategory))
+
+const max_launch_frames = 20
+const handOffset = xy(4, 0)
+
+const arrowArray = []
+
+const instructions = [
+    "⍇⍈", "RUN",
+    "ⓐ ", "JUMP",
+    //"ⓑ ", "ATTACK",
+    "⍗", "DUCK",
+    "ⓒ", "SPORT",
+]
+let bg_music = play_sound(bgMusic, true)
+
+def draw_entity_shadow(ent, w):
+    with x,y in ent.pos:
+        let h = groundY - y
+        if h > 20:
+            w *= 0.75
+        let shadowOffset = 0
+        draw_line(xy(x - w, groundY + 0), xy(x + w, groundY + 0), rgba(0, 0, 0, 20%), ent.z - 0.1)
+        if w > 2:
+            draw_line(xy(x - (w-2), groundY + 1), xy(x + (w-2), groundY + 1), rgba(0, 0, 0, 15%), ent.z - 0.1)
+
+def can_pickup(char, obj):
+    return true
+    // can you pick up some object?  allows a bit of
+    return magnitude(char.pos - obj.pos) < (10  +  2 * magnitude(char.vel))
+
+let autoPlay = true
+
+   
+frame
+────────────────────────────────────────────────────────────────────────
+
+const gamepad = gamepad_array[0]
+let frameMod = game_frames mod 100
+
+let launchBall = false
+let launchPower = 0
+
+if any_button_press(gamepad):
+    autoPlay = false
+
+with pos, vel, force, scale, spriteIndex, spriteFrame, animation, spritesheet, sprite, throwFrame in ninja:
+    // Advance animation. It is looped per-animation below.
+    if spriteFrame < sprite.frames:
+        ++spriteFrame
+    else:
+        ++spriteIndex
+        spriteFrame = 0
+
+    let analogIn = xy(device_control("get_analog_axes", 0))
+    let forceSport = autoPlay and (frameMod == 10)
+    let forceJump = autoPlay and (frameMod == 20)
+    let forceMove = autoPlay and frameMod > 50
+
+    if autoPlay and (forceMove):
+        analogIn.x = -0.75
+
+    let nextAnimation = animation;
+
+    if throwFrame >= 0:
+        ball.pos_in_parent += xy(0.35, 0.07) * sign(scale) * analogIn + xy(0, -0.35)
+    else:
+        if analogIn.x:
+
+            let landing = animation == "land"
+            let k = 1.0
+            if landing:
+                k = 0.5
+
+            // Running
+            scale.x = sign(analogIn.x)
+            vel.x = k * analogIn.x * runSpeed
+            nextAnimation = if analogIn.y > 0 then "crawl" else "run"
+        else: // Not running
+            vel.x *= 70%
+            nextAnimation = if analogIn.y > 0 then "duck" else "idle"
+      
+
+    // Clamp to ground and set landing pose
+    if ((find(animation, "jump") ≠ ∅ and pos.y + 8 ≥ groundY) or
+        (animation == "land" and spriteIndex < size(spritesheet[animation]))):
+        nextAnimation = "land"
+      
+    // snap to the ground
+    if pos.y + 8 > groundY: pos.y = groundY - 8; vel.y = 0
+   
+    if pos.y + 8 == groundY:
+        //if animation ≠ "land" and nextAnimation ≠ "land" and animation ≠ "attack":
+        if animation ≠ "attack":
+            // On ground, we can jump and attack
+            if gamepad.aa or forceJump: 
+                vel.y = -jumpSpeed
+            if gamepad.bb: 
+                nextAnimation = "attack"
+    else:
+        // Above ground
+        force.y = gravity * entity_mass(ninja)
+      
+    // Jumping animation
+    if pos.y + 8 < groundY:
+        nextAnimation = if vel.y < ½ then "jumpUp" else "jumpDown"
+      
+    // Change animation
+    if nextAnimation ≠ animation:
+        animation = nextAnimation
+        if animation == "jumpUp":
+            play_sound(jumpSound)
+        else if animation == "land":
+            play_sound({sound: landSound, volume: 50%})
+        spriteFrame = 0
+        spriteIndex = 0
+
+    sprite = array_value(spritesheet[animation], spriteIndex)
+
+    const heldBall = ball.parent
+    if gamepad.cc or forceSport:
+        // if holding the ball, then we drop it.
+        if heldBall:
+            throwFrame = max_launch_frames
+        else:
+            let closeEnough = can_pickup(ninja, ball)
+            if closeEnough:
+                entity_add_child(ninja, ball)
+                physics_remove_entity(physics, ball_physics)
+                ball.pos_in_parent = xy(handOffset)
+
+    if throwFrame >= 0:
+        launchPower = lerp(0, 1, max_launch_frames - throwFrame,
+                       0, max_launch_frames) 
+        if heldBall and (gamepad.released_c or throwFrame == 0):
+            launchBall = true
+
+        throwFrame -= 1
+
+    if launchBall:
+        let launchVel = 0.65 * launchPower * (ball.pos - (ninja.pos + sign(handOffset)))
+        launchVel += 0.5 * ninja.vel
+        entity_remove_child(ninja, ball)
+        physics_add_entity(physics, ball_physics)
+        ball_physics.vel = launchVel
+        let backspinAmt = 1.2
+        ball_physics.spin = - sign(scale.x) * (backspinAmt * 2 * pi / 60 ) * launchPower
+        throwFrame = -1
+
+    // Physics
+    entity_simulate(ninja)
+      
+    // Wrap around the screen edges
+    pos.x = loop(pos.x, SCREEN_SIZE.x)
+
+entity_update_children(ninja)
+
+// ball
+if not ball.parent:
+    with pos, vel, force, scale, spin in ball:
+        pos.x = loop(pos.x, SCREEN_SIZE.x)
+
+physics_simulate(physics)
+if not ball.parent:
+    ball.pos = ball_physics.pos
+    ball.angle = ball_physics.angle
+
+// Sky
+set_background(rgb(20%, 50%, 80%))
+draw_text(font, CREDITS.title, xy(½ SCREEN_SIZE.x, 20), #FFF, ∅, ∅, 0, 0)
+
+// Ground
+draw_corner_rect(xy(0, groundY), xy(SCREEN_SIZE.x, SCREEN_SIZE.y - (groundY)), #DDD)
+
+draw_rect({pos: basketPos + 0.5 * basketSize, size: basketSize, color: rgba(95%, 95%, 95%, 60%)})
+draw_rect({pos: rim_l.pos, size: rim_l.size, color: #f55})
+draw_rect({pos: rim_r.pos, size: rim_r.size, color: #f55})
+
+// line
+draw_line(xy(basketPos.x - lineDistX, groundY + 0), 
+          xy(basketPos.x - lineDistX, groundY + 2), rgba(80%, 50%, 50%, 100%), 1)
+
+// Show instructions
+local:
+    let instrOffsetY = 15
+    let pos = xy(12, groundY + instrOffsetY)
+    for i < ½ size(instructions):
+        draw_text(instructionFont, replace(instructions[2i], gamepad.prompt), pos, #7)
+        pos.y += draw_text(instructionFont, instructions[2i + 1], pos + xy(30, 0), #7).y
+        if pos.y > SCREEN_SIZE.y - 8:
+            pos.x += 97
+            pos.y = groundY + instrOffsetY
+
+// Ninja
+draw_entity(ninja)
+
+// Shadow
+draw_entity_shadow(ninja, 4)
+
+// Ball + shadow
+if not ball.parent:
+    draw_entity(ball)
+draw_entity_shadow(ball, ball.scale.x * 5)
+
+// aim guide
+if ninja.throwFrame > 0:
+    let guideStart = ninja.pos + sign(handOffset)
+    let dir = ball.pos - guideStart
+    draw_line(guideStart, guideStart + launchPower * 5 * dir, rgba(80%, 80%, 80%, 10%), 0.5)
+
+//draw_physics(physics)
